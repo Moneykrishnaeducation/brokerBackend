@@ -332,6 +332,8 @@ class EarlyAPIAuthMiddleware:
             path.startswith('/client/api/resend-login-otp') or
             path.startswith('/api/resend-login-otp') or
             path.startswith('/client/api/send-reset-otp/') or
+            path.startswith('/api/send-signup-otp/') or
+            path.startswith('/api/verify-signup-otp/') or
 	    path.startswith('/client/api/reset-password/confirm/')
         ):
             return self.get_response(request)
