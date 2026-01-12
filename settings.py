@@ -57,6 +57,7 @@ INSTALLED_APPS = [
 
 # Middleware
 MIDDLEWARE = [
+    'brokerBackend.middleware.GlobalSecurityHeadersMiddleware',
     'django_hosts.middleware.HostsRequestMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'brokerBackend.middleware.NoCacheMiddleware',  # Add no-cache middleware for development
@@ -308,6 +309,33 @@ class SafeTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
                     # Give up silently to avoid crashing the application thread
                     pass
 
+
+class SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """RotatingFileHandler that tolerates PermissionError on Windows.
+
+    If os.rename fails during rotation (WinError 32), copy+truncate is attempted
+    to create a backup without raising an exception.
+    """
+
+    def rotate(self, source, dest):
+        try:
+            super().rotate(source, dest)
+        except PermissionError:
+            try:
+                import shutil
+                shutil.copy2(source, dest)
+                try:
+                    with open(source, 'w', encoding=getattr(self, 'encoding', 'utf8')):
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                try:
+                    os.replace(source, dest)
+                except Exception:
+                    pass
+
+
 # Static file serving settings
 STATIC_HOST = '' if DEBUG else 'http://static.example.com'
 
@@ -401,6 +429,12 @@ CSRF_TRUSTED_ORIGINS = [
 CSP_TRUSTED_CDNS = [s for s in env('CSP_TRUSTED_CDNS', default='').split(',') if s]
 CSP_PAYMENT_GATEWAYS = [s for s in env('CSP_PAYMENT_GATEWAYS', default='').split(',') if s]
 
+# Ensure common external widgets are allowed by default (e.g., Tradays calendar widget)
+# You can override via the CSP_TRUSTED_CDNS env var if you prefer explicit control.
+_TRADAYS_HOST = 'https://www.tradays.com'
+if _TRADAYS_HOST not in CSP_TRUSTED_CDNS:
+    CSP_TRUSTED_CDNS.append(_TRADAYS_HOST)
+
 # Ensure CheezePay payment/checkout host is allowed by default so
 # frame-src/connect-src for payments permit CheezePay flows even when
 # env vars are not set. If you prefer to configure via .env, remove
@@ -486,17 +520,30 @@ PUBLIC_PATHS = [
     '/index.html',
 ]
 
-# Simple JWT
+# ============================
+# COOKIE AUTO-CLEAR CONFIGURATION (SINGLE SOURCE OF TRUTH)
+# ============================
+COOKIE_AUTO_CLEAR_CONFIG = {
+    'enabled': True,
+    'access_token_lifetime': 3600,                     # 5 seconds (in seconds)
+    'refresh_token_lifetime': 86400,                    # 1 day (in seconds)
+    'session_timeout': 1800,                            # 30 mins
+    'remember_me_access_lifetime': 604800,              # 7 days
+    'remember_me_refresh_lifetime': 2592000,            # 30 days
+}
+
+# ============================
+# SIMPLE JWT - Derives from COOKIE_AUTO_CLEAR_CONFIG
+# ============================
 from datetime import timedelta, datetime, timezone
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=600),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(seconds=COOKIE_AUTO_CLEAR_CONFIG['access_token_lifetime']),
+    'REFRESH_TOKEN_LIFETIME': timedelta(seconds=COOKIE_AUTO_CLEAR_CONFIG['refresh_token_lifetime']),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'UPDATE_LAST_LOGIN': True,
-    # default algorithm; may be overridden by JWT_ALGORITHM env
     'ALGORITHM': 'HS512',
-    # Default signing key (HMAC). If using RSA/RS*, we will load PEMs below.
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_HEADER_TYPES': ('Bearer',),
     'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
@@ -601,7 +648,7 @@ LOGGING = {
             'formatter': 'json',
         },
         'abuse_file': {
-            'class': 'logging.handlers.RotatingFileHandler',
+            '()': 'brokerBackend.settings.SafeRotatingFileHandler',
             'filename': ABUSE_LOG_FILE,
             'maxBytes': 1024*1024,  # 1MB
             'backupCount': 5,
@@ -707,25 +754,24 @@ REPORTS_EMAIL_HOST_PASSWORD = env('REPORTS_EMAIL_HOST_PASSWORD', default=EMAIL_H
 REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_FROM_EMAIL)
 
 #  Hosts
-ROOT_HOSTCONF = 'brokerBackend.hosts'
-DEFAULT_HOST = 'www'
-import socket
-if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
-    PARENT_HOST = 'localhost:8000'
-else:
-    PARENT_HOST = 'vtindex.com'
-HOST_PORT = '8000'
-HOST_SCHEME = 'http'
-
+# ROOT_HOSTCONF = 'brokerBackend.hosts'
+# DEFAULT_HOST = 'www'
+# import socket
+# if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+#    PARENT_HOST = 'localhost:8000'
+# else:
+#     PARENT_HOST = 'vtindex.com'
+# HOST_PORT = '8000'
+# HOST_SCHEME = 'http'
 
 
 
 # Hosts
-# ROOT_HOSTCONF = 'brokerBackend.hosts'
-# DEFAULT_HOST = 'www'
-# PARENT_HOST = 'hi5trader.com'
-# HOST_PORT = '8000'
-# HOST_SCHEME = 'http'
+ROOT_HOSTCONF = 'brokerBackend.hosts'
+DEFAULT_HOST = 'www'
+PARENT_HOST = 'hi5trader.com'
+HOST_PORT = '8000'
+HOST_SCHEME = 'http'
 
 
 # Admin Settings
@@ -745,6 +791,8 @@ CSRF_COOKIE_SECURE = True
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)  # Redirect HTTP to HTTPS in production
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
+
+COOKIE_SECURE_FLAG_OVERRIDE = env.bool('COOKIE_SECURE_FLAG_OVERRIDE', default=False)
 
 # Comma-separated list of IPs that are allowed to access admin endpoints when
 # the request is not coming from the `admin.` subdomain or localhost.
@@ -891,3 +939,35 @@ CELERY_BEAT_SCHEDULE = {
     },
     # Add other periodic tasks here as needed
 }
+
+
+
+
+# ============================
+# COOKIE AUTO-CLEAR CONFIGURATION
+# ============================
+# Backend-controlled cookie expiration and auto-clear settings
+# All time values are in seconds
+# COOKIE_AUTO_CLEAR_CONFIG = {
+#     'enabled': True,                                    # Enable/disable auto-clear functionality
+#     'access_token_lifetime': 60,                       # Access token: 1 minute (60 seconds)
+#     'refresh_token_lifetime': 2592000,                  # Refresh token: 30 days (2592000 seconds)
+#     'session_timeout': 1800,                            # Session idle timeout: 30 mins (1800 seconds)
+#     'remember_me_access_lifetime': 604800,              # Remember-me access: 7 days (604800 seconds)
+#     'remember_me_refresh_lifetime': 2592000,            # Remember-me refresh: 30 days (2592000 seconds)
+# }
+# 
+# Configuration Guide:
+# - access_token_lifetime: Time until access token expires (e.g., 1 hour = 3600 seconds)
+# - refresh_token_lifetime: Time until refresh token expires (e.g., 30 days = 2592000 seconds)
+# - session_timeout: Idle session timeout (e.g., 30 mins = 1800 seconds)
+# - remember_me_access_lifetime: Access token lifetime when "Remember Me" is enabled
+# - remember_me_refresh_lifetime: Refresh token lifetime when "Remember Me" is enabled
+#
+# IMPORTANT: Changing these values will:
+# 1. Automatically apply to all new login sessions
+# 2. Require browser to store cookies only for the configured duration
+# 3. Clear cookies automatically after the specified time expires
+#
+# Note: Browser respects max_age; server-side cleanup happens during requests
+

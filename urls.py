@@ -13,6 +13,7 @@ from django.views.generic import TemplateView
 
 # Top-level urlpatterns (unprefixed). Keep admin and chat here so admin remains accessible
 urlpatterns = [
+    
     # Django admin interface (without custom login override)
     path('admin/', admin.site.urls),
 

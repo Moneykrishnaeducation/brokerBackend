@@ -13,6 +13,29 @@ from . import alerting
 logger = logging.getLogger(__name__)
 
 
+class GlobalSecurityHeadersMiddleware(MiddlewareMixin):
+    """Ensure a minimal set of security headers are present on every response.
+
+    This middleware is applied very early in the stack so that responses
+    returned by earlier middleware still get security headers (404s, rejects,
+    probes, etc.). It only sets defaults when a header is not already present.
+    """
+
+    def process_response(self, request, response):
+        try:
+            response.setdefault('X-Content-Type-Options', 'nosniff')
+            response.setdefault('X-Frame-Options', 'SAMEORIGIN')
+            response.setdefault('X-XSS-Protection', '1; mode=block')
+            response.setdefault('Referrer-Policy', 'same-origin')
+            # Minimal fallback CSP to ensure a policy exists for clients that
+            # rely on it; existing middleware/settings may provide a stronger CSP.
+            if not response.get('Content-Security-Policy'):
+                response['Content-Security-Policy'] = "default-src 'self';"
+        except Exception:
+            logger.exception('Error while applying global security headers')
+        return response
+
+
 def _effective_cdns():
     """Return the configured CSP_TRUSTED_CDNS plus a small set of common external CDNs
 
@@ -26,6 +49,7 @@ def _effective_cdns():
         'https://fonts.googleapis.com',
         'https://fonts.gstatic.com',
         'https://static.cloudflareinsights.com',
+        'https://www.tradays.com',
     ]
     for d in defaults:
         if d not in cdns:
@@ -334,7 +358,9 @@ class EarlyAPIAuthMiddleware:
             path.startswith('/client/api/send-reset-otp/') or
             path.startswith('/api/send-signup-otp/') or
             path.startswith('/api/verify-signup-otp/') or
-	    path.startswith('/client/api/reset-password/confirm/')
+	        path.startswith('/client/api/reset-password/confirm/') or
+            path.startswith('/api/oauth/google') or
+            path.startswith('/api/oauth/microsoft')
         ):
             return self.get_response(request)
 
