@@ -352,6 +352,8 @@ class EarlyAPIAuthMiddleware:
             path.startswith('/client/api/signup') or
             path.startswith('/client/api/validate-token') or
             path.startswith('/client/api/verify-otp') or
+            path.startswith('/api/send-reset-otp/') or
+            path.startswith('/api/reset-password/confirm/') or
             path.startswith('/client/api/resend-otp') or
             path.startswith('/client/api/resend-login-otp') or
             path.startswith('/api/resend-login-otp') or
