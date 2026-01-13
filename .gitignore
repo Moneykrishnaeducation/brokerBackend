@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# Local broken migration copies (DO NOT COMMIT)
+migrations/
