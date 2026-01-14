@@ -754,23 +754,24 @@ REPORTS_EMAIL_HOST_USER = env('REPORTS_EMAIL_HOST_USER', default=EMAIL_HOST_USER
 REPORTS_EMAIL_HOST_PASSWORD = env('REPORTS_EMAIL_HOST_PASSWORD', default=EMAIL_HOST_PASSWORD)
 REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_FROM_EMAIL)
 
-#  Hosts
-ROOT_HOSTCONF = 'brokerBackend.hosts'
-DEFAULT_HOST = 'www'
-import socket
-if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
-   PARENT_HOST = 'localhost:8000'
-else:
-    PARENT_HOST = 'vtindex.com'
-HOST_PORT = '8000'
-HOST_SCHEME = 'http'
 
-# Hosts
+#  Hosts
 # ROOT_HOSTCONF = 'brokerBackend.hosts'
 # DEFAULT_HOST = 'www'
-# PARENT_HOST = 'hi5trader.com'
+# import socket
+# if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+#    PARENT_HOST = 'localhost:8000'
+# else:
+#     PARENT_HOST = 'vtindex.com'
 # HOST_PORT = '8000'
 # HOST_SCHEME = 'http'
+
+# Hosts
+ROOT_HOSTCONF = 'brokerBackend.hosts'
+DEFAULT_HOST = 'www'
+PARENT_HOST = 'hi5trader.com'
+HOST_PORT = '8000'
+HOST_SCHEME = 'http'
 
 
 # Admin Settings
