@@ -14,6 +14,68 @@ import django
 from django.utils import timezone
 from django.db import close_old_connections
 
+# Fix Windows console encoding for Unicode characters
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+# Process lock to prevent multiple MAM instances
+import tempfile
+import atexit
+LOCK_FILE = os.path.join(tempfile.gettempdir(), 'mam_instance.lock')
+_lock_file_handle = None
+
+def acquire_process_lock():
+    """Acquire a file-based lock to ensure only one MAM instance runs"""
+    global _lock_file_handle
+    try:
+        # Check if lock file exists and if process is still running
+        if os.path.exists(LOCK_FILE):
+            try:
+                with open(LOCK_FILE, 'r') as f:
+                    old_pid = int(f.read().strip())
+                # Try to check if the process is still running on Windows
+                if sys.platform == 'win32':
+                    import subprocess
+                    result = subprocess.run(['tasklist', '/PID', str(old_pid)], 
+                                          capture_output=True, text=True)
+                    if str(old_pid) not in result.stdout:
+                        # Process not running, remove stale lock file
+                        os.remove(LOCK_FILE)
+                    else:
+                        return False  # Another instance is running
+            except:
+                # If we can't read the PID or check process, remove stale lock
+                try:
+                    os.remove(LOCK_FILE)
+                except:
+                    pass
+        
+        _lock_file_handle = open(LOCK_FILE, 'w')
+        _lock_file_handle.write(str(os.getpid()))
+        _lock_file_handle.flush()
+        return True
+    except (IOError, OSError):
+        if _lock_file_handle:
+            _lock_file_handle.close()
+            _lock_file_handle = None
+        return False
+
+def release_process_lock():
+    """Release the process lock"""
+    global _lock_file_handle
+    if _lock_file_handle:
+        try:
+            _lock_file_handle.close()
+            os.remove(LOCK_FILE)
+        except:
+            pass
+        _lock_file_handle = None
+
+# Register cleanup function
+atexit.register(release_process_lock)
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger("urllib3").setLevel(logging.CRITICAL)
 requests.packages.urllib3.disable_warnings()
@@ -71,6 +133,16 @@ from adminPanel.models import *
 
 
 def run_mam_script():
+    # Check for existing MAM instance
+    if not acquire_process_lock():
+        print("❌ Another MAM instance is already running!")
+        print("   Only one MAM copy trading engine can run at a time.")
+        print("   If you're sure no other instance is running, delete the lock file:")
+        print(f"   {LOCK_FILE}")
+        return
+    
+    print("✅ MAM process lock acquired successfully")
+    
     # Ensure any stale DB connections are closed before starting long-running threads
     try:
         close_old_connections()
@@ -354,6 +426,7 @@ def run_mam_script():
 
         def copy_order_to_followers(self, order, force=False):
             followers = self.get_followers(order.Login)
+            logger.info(f"[COPY] copy_order_to_followers: master={order.Login}, active_followers={followers}, count={len(followers)}")
             order_comment = f"{order.Login}_{order.Order}"
 
             for follower_id in followers:
@@ -413,21 +486,21 @@ def run_mam_script():
                         row = cursor.fetchone()
                         if row:
                             acct_id, acct_mode, acct_factor, acct_type, dual_trade, multi_trade_count = row
-                            logger.info(f"🔍 RAW SQL LOOKUP (order copy) follower={follower_id}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
+                            logger.info(f"[SQL] RAW SQL LOOKUP (order copy) follower={follower_id}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
                         else:
                             acct_mode = None
                             acct_factor = None
                             dual_trade = False
                             multi_trade_count = 1
-                            logger.warning(f"⚠️ Follower account {follower_id} NOT FOUND in database (order copy)")
+                            logger.warning(f"[WARNING] Follower account {follower_id} NOT FOUND in database (order copy)")
                     
                     if acct_mode == 'fixed_multiple':
                         try:
                             factor = float(acct_factor or 1.0)
                             calculated_volume = float(getattr(order, 'VolumeCurrent', getattr(order, 'Volume', 0))) * factor
-                            logger.info(f"✅ APPLYING FIXED MULTIPLE (order copy): base={getattr(order, 'VolumeCurrent', getattr(order, 'Volume', 0))} * factor={factor} = {calculated_volume}")
+                            logger.info(f"[OK] APPLYING FIXED MULTIPLE (order copy): base={getattr(order, 'VolumeCurrent', getattr(order, 'Volume', 0))} * factor={factor} = {calculated_volume}")
                         except Exception as ex:
-                            logger.error(f"❌ Error applying fixed multiple (order copy): {ex}")
+                            logger.error(f"[ERROR] Error applying fixed multiple (order copy): {ex}")
                     # Log diagnostic info for debugging fixed_multiple behavior
                     logger.debug(f"Fixed-mult check - master={order.Login}, follower={follower_id}, acct_mode={acct_mode}, acct_factor={acct_factor}, master_volume={getattr(order,'VolumeCurrent', getattr(order,'Volume',0))}, computed_volume={calculated_volume}")
                 except Exception as e:
@@ -436,32 +509,54 @@ def run_mam_script():
                 # Ensure minimum volume of symbol_min_vol is applied where appropriate
                 try:
                     if symbol_min_vol:
-                        request.Volume = max(symbol_min_vol, int(calculated_volume / symbol_min_vol) * symbol_min_vol)
+                        final_volume = max(symbol_min_vol, int(calculated_volume / symbol_min_vol) * symbol_min_vol)
                     else:
-                        request.Volume = calculated_volume
+                        final_volume = calculated_volume
                 except Exception:
-                    request.Volume = calculated_volume
-                if request.Volume > 0:
-                    # Deduplicate: ensure follower doesn't already have an open order with same comment
-                    try:
-                        exists = False
-                        for o in manager.OrderGetOpen(follower_id):
-                            if o.Comment == order_comment:
-                                exists = True
-                                break
-                        if exists:
-                            logger.debug(f"Skipping order creation for follower {follower_id}: existing order with comment {order_comment}")
-                            continue
-                    except Exception as e:
-                        logger.warning(f"Could not check existing orders for follower {follower_id}: {e}")
+                    final_volume = calculated_volume
+                
+                if final_volume > 0:
+                    # Determine how many times to copy based on multi_trade_count setting
+                    num_copies = max(1, min(10, int(multi_trade_count)))
+                    logger.info(f"[MULTI-TRADE] Multi trade mode (order): {'ENABLED' if num_copies > 1 else 'DISABLED'} - will execute {num_copies} order(s) for follower {follower_id}")
+                    
+                    for trade_num in range(1, num_copies + 1):
+                        # Create unique comment and dedupe key for each copy
+                        if num_copies > 1:
+                            trade_comment = f"{order_comment}_trade{trade_num}"
+                            trade_dedupe_key = f"{request_type}{follower_id}{order_comment}_trade{trade_num}"
+                        else:
+                            trade_comment = order_comment
+                            trade_dedupe_key = f"{request_type}{follower_id}{order_comment}"
+                        
+                        # Deduplicate: ensure follower doesn't already have an open order with same comment
+                        try:
+                            exists = False
+                            for o in manager.OrderGetOpen(follower_id):
+                                if o.Comment == trade_comment:
+                                    exists = True
+                                    break
+                            if exists:
+                                logger.debug(f"Skipping order creation {trade_num}/{num_copies} for follower {follower_id}: existing order with comment {trade_comment}")
+                                continue
+                        except Exception as e:
+                            logger.warning(f"Could not check existing orders for follower {follower_id}: {e}")
 
-                    logger.debug(f"Preparing to send {request_type} to follower {follower_id} (comment={order_comment}, volume={request.Volume})")
-                    # Set a stable dedupe key on the request to align DB/file-lock dedupe layers
-                    try:
-                        request.DedupeKey = f"{request_type}{follower_id}{order_comment}"
-                    except Exception:
-                        pass
-                    self.execute_trade(request, follower_id, request_type, force=force)
+                        # Create a new request for this specific trade
+                        trade_request = self.order_to_req(order, MT5Manager.MTRequest(manager), request_type)
+                        trade_request.Login = follower_id
+                        trade_request.Comment = trade_comment
+                        trade_request.Volume = final_volume
+                        if order_found:
+                            trade_request.Order = request_order_id
+                        
+                        logger.info(f"[EXECUTE] Executing order {trade_num}/{num_copies} for follower {follower_id} (comment={trade_comment}, volume={trade_request.Volume})")
+                        # Set a stable dedupe key on the request to align DB/file-lock dedupe layers
+                        try:
+                            trade_request.DedupeKey = trade_dedupe_key
+                        except Exception:
+                            pass
+                        self.execute_trade(trade_request, follower_id, request_type, force=force)
 
         def delete_order_to_followers(self, order, force=False):
             followers = self.get_followers(order.Login)
@@ -469,15 +564,17 @@ def run_mam_script():
 
             for follower_id in followers:
                 for open_order in manager.OrderGetOpen(follower_id):
-                    if open_order.Comment == order_comment:
+                    # Match both regular comments and multi-trade comments (with _trade1, _trade2, etc.)
+                    if open_order.Comment == order_comment or open_order.Comment.startswith(f"{order_comment}_trade"):
                         request = self.order_to_req(order, MT5Manager.MTRequest(manager), "pendingOrderDeleted")
                         request.Order = open_order.Order
                         request.Login = follower_id
+                        logger.info(f"[DELETE] Deleting order for follower {follower_id} (comment={open_order.Comment})")
                         self.execute_trade(request, follower_id, "delete order", force=force)
 
         def copy_position_to_followers(self, order, force=False):
             followers = self.get_followers(order.Login)
-            # logger.info(f"copy_position_to_followers: leader={order.Login}, candidate followers={followers}")
+            logger.info(f"[COPY] copy_position_to_followers: master={order.Login}, active_followers={followers}, count={len(followers)}")
             # Build a stable master position id (if available)
             master_pos_id = getattr(order, 'PositionID', None) or getattr(order, 'Position', None)
             # If the master position has already been fully processed recently, skip the entire function
@@ -572,22 +669,22 @@ def run_mam_script():
                             row = cursor.fetchone()
                             if row:
                                 acct_id, acct_mode, acct_factor, acct_type, dual_trade, multi_trade_count = row
-                                logger.info(f"🔍 RAW SQL LOOKUP follower={follower}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
+                                logger.info(f"[SQL] RAW SQL LOOKUP follower={follower}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
                             else:
                                 acct_mode = None
                                 multi_trade_count = 1
                                 acct_factor = None
                                 acct_type = None
                                 dual_trade = False
-                                logger.warning(f"⚠️ Follower account {follower} NOT FOUND in database")
+                                logger.warning(f"[WARNING] Follower account {follower} NOT FOUND in database")
                         
                         if acct_mode == 'fixed_multiple':
                             try:
                                 factor = float(acct_factor or 1.0)
                                 calculated_volume = float(base_volume) * factor
-                                logger.info(f"✅ APPLYING FIXED MULTIPLE: base={base_volume} * factor={factor} = {calculated_volume}")
+                                logger.info(f"[OK] APPLYING FIXED MULTIPLE: base={base_volume} * factor={factor} = {calculated_volume}")
                             except Exception as ex:
-                                logger.error(f"❌ Error applying fixed multiple: {ex}")
+                                logger.error(f"[ERROR] Error applying fixed multiple: {ex}")
                         logger.debug(f"Fixed-mult position check - master={order.Login}, follower={follower}, acct_mode={acct_mode}, acct_factor={acct_factor}, base_volume={base_volume}, computed_volume={calculated_volume}")
                     except Exception as e:
                         logger.warning(f"Could not lookup follower account for fixed-mult position check: {e}")
@@ -608,8 +705,8 @@ def run_mam_script():
                     )
                     if request.Volume > 0:
                         # Determine how many times to copy based on multi_trade_count setting
-                        num_copies = max(1, min(10, int(multi_trade_count))) if dual_trade else 1
-                        logger.info(f"🔄 Multi trade mode: {'ENABLED' if dual_trade else 'DISABLED'} - will execute {num_copies} trade(s) for follower {follower}")
+                        num_copies = max(1, min(10, int(multi_trade_count)))
+                        logger.info(f"[MULTI-TRADE] Multi trade mode: {'ENABLED' if num_copies > 1 else 'DISABLED'} - will execute {num_copies} trade(s) for follower {follower}")
                         
                         for trade_num in range(1, num_copies + 1):
                             # Create unique comment and dedupe key for each copy
@@ -620,13 +717,26 @@ def run_mam_script():
                                 trade_comment = comment
                                 trade_dedupe_key = dedupe_key
                             
-                            # Deduplicate: ensure follower doesn't already have a position with same comment
+                            # Enhanced deduplicate: ensure follower doesn't already have a position with same comment or base comment
                             try:
                                 exists = False
+                                existing_comments = []
                                 for p in manager.PositionGet(follower):
+                                    existing_comments.append(p.Comment)
+                                    # Check for exact comment match
                                     if p.Comment == trade_comment:
                                         exists = True
                                         break
+                                    # Also check for similar comments to prevent near-duplicates
+                                    if trade_comment.startswith(p.Comment) or p.Comment.startswith(trade_comment.split('_trade')[0]):
+                                        base_comment = trade_comment.split('_trade')[0]
+                                        if p.Comment.startswith(base_comment):
+                                            # Count existing trades for this base comment
+                                            existing_count = len([c for c in existing_comments if c.startswith(base_comment)])
+                                            if existing_count >= num_copies:
+                                                exists = True
+                                                logger.info(f"Skipping position creation {trade_num}/{num_copies} for follower {follower}: already have {existing_count} positions for base comment {base_comment}")
+                                                break
                                 if exists:
                                     logger.debug(f"Skipping position creation {trade_num}/{num_copies} for follower {follower}: existing position with comment {trade_comment}")
                                     continue
@@ -662,7 +772,7 @@ def run_mam_script():
                                 pass
                             
                             # submit the send to the shared executor
-                            logger.info(f"🎯 Executing trade {trade_num}/{num_copies} for follower {follower} (master_pos={master_pos_id}, dedupe={trade_dedupe_key}, volume={trade_request.Volume})")
+                            logger.info(f"[EXECUTE] Executing trade {trade_num}/{num_copies} for follower {follower} (master_pos={master_pos_id}, dedupe={trade_dedupe_key}, volume={trade_request.Volume})")
                             fut = COPY_EXECUTOR.submit(self.execute_trade, trade_request, follower, "copy position", force)
                             futures[fut] = (follower, trade_dedupe_key, trade_comment)
                 except Exception as e:
@@ -734,10 +844,38 @@ def run_mam_script():
                 pass
 
         def get_followers(self, loginID):
-            return [
+            # Get all potential followers based on agent relationship
+            potential_followers = [
                 user.Login for user in manager.UserGetByGroup(manager.UserGet(loginID).Group)
                 if user.Agent == loginID
             ]
+            
+            # Filter out followers who have paused copying (investor_allow_copy = False)
+            active_followers = []
+            try:
+                from django.db import connection
+                close_old_connections()
+                connection.close()
+                connection.connect()
+                
+                with connection.cursor() as cursor:
+                    for follower_id in potential_followers:
+                        cursor.execute(
+                            'SELECT investor_allow_copy FROM "adminPanel_tradingaccount" WHERE account_id = %s AND account_type = %s',
+                            [str(follower_id), 'mam_investment']
+                        )
+                        row = cursor.fetchone()
+                        if row and row[0]:  # Only include if investor_allow_copy is True
+                            active_followers.append(follower_id)
+                            logger.debug(f"Follower {follower_id} is active (copying enabled)")
+                        elif row:
+                            logger.info(f"[COPY-DISABLED] Skipping follower {follower_id} - copying is paused")
+            except Exception as e:
+                logger.warning(f"Error checking investor_allow_copy status, using all followers: {e}")
+                # Fallback to all followers if DB check fails
+                active_followers = potential_followers
+            
+            return active_followers
 
         def OnOrderUpdate(self, order):
             global last_activity_ts
@@ -806,21 +944,21 @@ def run_mam_script():
                                     row = cursor.fetchone()
                                     if row:
                                         acct_id, acct_mode, acct_factor, acct_type, dual_trade, multi_trade_count = row
-                                        logger.info(f"🔍 RAW SQL LOOKUP (position update) follower={follower}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
+                                        logger.info(f"[SQL] RAW SQL LOOKUP (position update) follower={follower}, found_account={acct_id}, type={acct_type}, mode={acct_mode}, factor={acct_factor}, dual_trade={dual_trade}, trade_count={multi_trade_count}")
                                     else:
                                         acct_mode = None
                                         acct_factor = None
                                         dual_trade = False
                                         multi_trade_count = 1
-                                        logger.warning(f"⚠️ Follower account {follower} NOT FOUND in database (position update)")
+                                        logger.warning(f"[WARNING] Follower account {follower} NOT FOUND in database (position update)")
                                 
                                 if acct_mode == 'fixed_multiple':
                                     try:
                                         factor = float(acct_factor or 1.0)
                                         calculated_volume = float(position.Volume) * factor
-                                        logger.info(f"✅ APPLYING FIXED MULTIPLE (position update): base={position.Volume} * factor={factor} = {calculated_volume}")
+                                        logger.info(f"[OK] APPLYING FIXED MULTIPLE (position update): base={position.Volume} * factor={factor} = {calculated_volume}")
                                     except Exception as ex:
-                                        logger.error(f"❌ Error applying fixed multiple (position update): {ex}")
+                                        logger.error(f"[ERROR] Error applying fixed multiple (position update): {ex}")
                                 logger.debug(f"Fixed-mult update check - master={position.Login}, follower={follower}, acct_mode={acct_mode}, acct_factor={acct_factor}, master_pos_volume={position.Volume}, computed_volume={calculated_volume}")
                             except Exception as e:
                                 logger.warning(f"Could not lookup follower account for fixed-mult update check: {e}")
@@ -887,7 +1025,7 @@ def run_mam_script():
                                    pos.Comment.startswith(f"{expected_comment}_trade"))
                         
                         if is_match:
-                            logger.info(f"🔒 Closing follower position: {follower} position={pos.Position} comment={pos.Comment}")
+                            logger.info(f"[CLOSE] Closing follower position: {follower} position={pos.Position} comment={pos.Comment}")
                             request = MT5Manager.MTRequest(manager)
                             request.Action = 200
                             request.PriceOrder = pos.PriceCurrent
@@ -1012,10 +1150,38 @@ def run_mam_script():
             threading.Thread(target=perform_trade, args=(force,)).start()
 
         def get_followers(self, loginID):
-            return [
+            # Get all potential followers based on agent relationship
+            potential_followers = [
                 user.Login for user in manager.UserGetByGroup(manager.UserGet(loginID).Group)
                 if user.Agent == loginID
             ]
+            
+            # Filter out followers who have paused copying (investor_allow_copy = False)
+            active_followers = []
+            try:
+                from django.db import connection
+                close_old_connections()
+                connection.close()
+                connection.connect()
+                
+                with connection.cursor() as cursor:
+                    for follower_id in potential_followers:
+                        cursor.execute(
+                            'SELECT investor_allow_copy FROM "adminPanel_tradingaccount" WHERE account_id = %s AND account_type = %s',
+                            [str(follower_id), 'mam_investment']
+                        )
+                        row = cursor.fetchone()
+                        if row and row[0]:  # Only include if investor_allow_copy is True
+                            active_followers.append(follower_id)
+                            logger.debug(f"Follower {follower_id} is active (copying enabled)")
+                        elif row:
+                            logger.info(f"[COPY-DISABLED] Skipping follower {follower_id} - copying is paused")
+            except Exception as e:
+                logger.warning(f"Error checking investor_allow_copy status, using all followers: {e}")
+                # Fallback to all followers if DB check fails
+                active_followers = potential_followers
+            
+            return active_followers
 
 
     def prop_management():
@@ -1180,4 +1346,8 @@ def run_mam_script():
             # continue to retry indefinitely
             continue
 
-run_mam_script()
+try:
+    run_mam_script()
+finally:
+    release_process_lock()
+    print("🔓 MAM process lock released")
