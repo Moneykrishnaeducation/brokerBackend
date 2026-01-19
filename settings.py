@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Security
-SECRET_KEY = env('DJANGO_SECRET_KEY', default='fallback-secret-key')
+SECRET_KEY = env('DJANGO_SECRET_KEY', default='change-me-in-production')
 DEBUG = env.bool('DJANGO_DEBUG', default=False)
-ALLOWED_HOSTS = env('DJANGO_ALLOWED_HOSTS').split(',')
-CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS').split(',')
-CSRF_TRUSTED_ORIGINS = env('CSRF_TRUSTED_ORIGINS').split(',')
+ALLOWED_HOSTS = env('DJANGO_ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+CORS_ALLOWED_ORIGINS = env('CORS_ALLOWED_ORIGINS', default='http://localhost:3000').split(',')
+CSRF_TRUSTED_ORIGINS = env('CSRF_TRUSTED_ORIGINS', default='http://localhost:3000').split(',')
 
 # Optional: expose referral client URLs to settings
 # Default to local/test hosts if not provided in .env
@@ -57,6 +57,8 @@ INSTALLED_APPS = [
 
 # Middleware
 MIDDLEWARE = [
+    # CRITICAL SECURITY: Block source code and sensitive files FIRST
+    'brokerBackend.source_code_protection.SourceCodeProtectionMiddleware',
     'brokerBackend.middleware.GlobalSecurityHeadersMiddleware',
     'django_hosts.middleware.HostsRequestMiddleware',
     'corsheaders.middleware.CorsMiddleware',
@@ -526,8 +528,8 @@ PUBLIC_PATHS = [
 # ============================
 COOKIE_AUTO_CLEAR_CONFIG = {
     'enabled': True,
-    'access_token_lifetime': 36000,                     # 10 hours (in seconds)
-    'refresh_token_lifetime': 36000,                    # 10 hours (in seconds)
+    'access_token_lifetime': 3600,                     # 5 seconds (in seconds)
+    'refresh_token_lifetime': 3600,                    # 1 day (in seconds)
     'session_timeout': 1800,                            # 30 mins
     'remember_me_access_lifetime': 604800,              # 7 days
     'remember_me_refresh_lifetime': 2592000,            # 30 days
