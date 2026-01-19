@@ -66,9 +66,12 @@ urlpatterns += i18n_patterns(
 )
 
 
-# Serve static and media files always (for testing or if web server is not configured)
-urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# SECURITY: Serve static and media files
+# Middleware blocks .py files automatically
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# In production, web server (Nginx) handles static files
 
 # Custom error handlers
 handler404 = 'brokerBackend.views.custom_404'
