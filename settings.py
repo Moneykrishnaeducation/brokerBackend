@@ -526,8 +526,8 @@ PUBLIC_PATHS = [
 # ============================
 COOKIE_AUTO_CLEAR_CONFIG = {
     'enabled': True,
-    'access_token_lifetime': 3600,                     # 5 seconds (in seconds)
-    'refresh_token_lifetime': 86400,                    # 1 day (in seconds)
+    'access_token_lifetime': 36000,                     # 10 hours (in seconds)
+    'refresh_token_lifetime': 36000,                    # 10 hours (in seconds)
     'session_timeout': 1800,                            # 30 mins
     'remember_me_access_lifetime': 604800,              # 7 days
     'remember_me_refresh_lifetime': 2592000,            # 30 days
