@@ -267,11 +267,15 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                 if recipient_id:
                     recipient = await self._get_user(recipient_id)
                 
+                # Get admin's display name
+                admin_sender_name = f"{self.user.first_name} {self.user.last_name}".strip() or self.user.email
+                
                 # Save message to database
                 message_obj = await self._save_admin_message(
                     sender=self.user,
                     recipient=recipient,
-                    message=message
+                    message=message,
+                    admin_sender_name=admin_sender_name
                 )
                 
                 # If specific recipient, send to their room
@@ -281,7 +285,21 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                         {
                             'type': 'admin_message',
                             'message': message,
-                            'sender_name': f"{self.user.first_name} {self.user.last_name}".strip() or self.user.email,
+                            'sender_name': admin_sender_name,
+                            'timestamp': timestamp,
+                            'message_id': message_obj.id if message_obj else None
+                        }
+                    )
+                    
+                    # Broadcast admin message to all other admins so they see the reply
+                    await self.channel_layer.group_send(
+                        'admin_chat_room',
+                        {
+                            'type': 'admin_message_broadcast',
+                            'message': message,
+                            'recipient_id': recipient_id,
+                            'sender_name': admin_sender_name,
+                            'sender_id': self.user.id,
                             'timestamp': timestamp,
                             'message_id': message_obj.id if message_obj else None
                         }
@@ -349,6 +367,18 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
             'timestamp': event.get('timestamp', datetime.now().isoformat())
         }))
 
+    async def admin_message_broadcast(self, event):
+        """Receive admin message from another admin and broadcast to all admins."""
+        await self.send(text_data=json.dumps({
+            'type': 'admin_message_broadcast',
+            'message': event['message'],
+            'recipient_id': event['recipient_id'],
+            'sender_name': event.get('sender_name', 'Unknown Admin'),
+            'sender_id': event.get('sender_id'),
+            'timestamp': event.get('timestamp', datetime.now().isoformat()),
+            'message_id': event.get('message_id')
+        }))
+
     async def user_typing(self, event):
         """User is typing indicator."""
         await self.send(text_data=json.dumps({
@@ -383,7 +413,7 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
         }))
 
     @database_sync_to_async
-    def _save_admin_message(self, sender, recipient, message):
+    def _save_admin_message(self, sender, recipient, message, admin_sender_name=None):
         """Save admin message to database."""
         try:
             from adminPanel.models import ChatMessage
@@ -391,7 +421,8 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                 sender=sender,
                 recipient=recipient,
                 message=message,
-                sender_type='admin'
+                sender_type='admin',
+                admin_sender_name=admin_sender_name
             )
         except Exception as e:
             logger.error(f'Error saving admin message to database: {e}')

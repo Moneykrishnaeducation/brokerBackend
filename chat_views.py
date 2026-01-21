@@ -129,12 +129,16 @@ def admin_send_message(request):
                     status=status.HTTP_404_NOT_FOUND
                 )
         
+        # Get admin's display name
+        admin_sender_name = f"{request.user.first_name} {request.user.last_name}".strip() or request.user.email
+        
         # Create the chat message
         chat_message = ChatMessage.objects.create(
             sender=request.user,
             recipient=recipient,
             message=message_text,
-            sender_type='admin'
+            sender_type='admin',
+            admin_sender_name=admin_sender_name
         )
         
         serializer = ChatMessageSerializer(chat_message)
