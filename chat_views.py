@@ -572,3 +572,53 @@ def get_chat_stats(request):
             {'status': 'error', 'message': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdminOrManager])
+def get_admin_profiles(request):
+    """
+    Admin endpoint to retrieve profile pictures for multiple admins.
+    Query parameter: ids (comma-separated user IDs)
+    Returns: {profiles: [{id: int, profile_pic: string|null}]}
+    """
+    try:
+        ids_param = request.GET.get('ids', '')
+        
+        if not ids_param:
+            return Response(
+                {'status': 'error', 'message': 'ids parameter required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Parse comma-separated IDs
+        try:
+            admin_ids = [int(id_str.strip()) for id_str in ids_param.split(',') if id_str.strip()]
+        except ValueError:
+            return Response(
+                {'status': 'error', 'message': 'Invalid ID format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not admin_ids:
+            return Response({'profiles': []})
+        
+        # Get admins with their profile pictures
+        admins = User.objects.filter(id__in=admin_ids).values('id', 'profile_pic')
+        
+        return Response({
+            'profiles': [
+                {
+                    'id': admin['id'],
+                    'profile_pic': admin['profile_pic'] if admin['profile_pic'] else None
+                }
+                for admin in admins
+            ]
+        })
+        
+    except Exception as e:
+        logger.error(f'Error getting admin profiles: {e}')
+        return Response(
+            {'status': 'error', 'message': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
