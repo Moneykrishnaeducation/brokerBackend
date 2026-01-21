@@ -26,15 +26,17 @@ User = get_user_model()
 @permission_classes([IsAuthenticated])
 def send_message(request):
     """
-    Send a chat message from client to admin.
+    Send a chat message from client to admin (supports text and/or image).
     """
     try:
         data = request.data
         message_text = data.get('message', '').strip()
+        image_file = request.FILES.get('image')
         
-        if not message_text:
+        # Allow message with text, image, or both
+        if not message_text and not image_file:
             return Response(
-                {'status': 'error', 'message': 'Message cannot be empty'},
+                {'status': 'error', 'message': 'Message or image is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -42,6 +44,7 @@ def send_message(request):
         chat_message = ChatMessage.objects.create(
             sender=request.user,
             message=message_text,
+            image=image_file if image_file else None,
             sender_type='client'
         )
         
@@ -105,16 +108,18 @@ def get_messages(request):
 @permission_classes([IsAuthenticated, IsAdminOrManager])
 def admin_send_message(request):
     """
-    Admin endpoint to send messages to clients.
+    Admin endpoint to send messages to clients (supports text and/or image).
     """
     try:
         data = request.data
         message_text = data.get('message', '').strip()
         recipient_id = data.get('recipient_id')
+        image_file = request.FILES.get('image')
         
-        if not message_text:
+        # Allow message with text, image, or both
+        if not message_text and not image_file:
             return Response(
-                {'status': 'error', 'message': 'Message cannot be empty'},
+                {'status': 'error', 'message': 'Message or image is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -137,6 +142,7 @@ def admin_send_message(request):
             sender=request.user,
             recipient=recipient,
             message=message_text,
+            image=image_file if image_file else None,
             sender_type='admin',
             admin_sender_name=admin_sender_name
         )
