@@ -217,6 +217,8 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                 return
             
             self.room_group_name = 'admin_chat_room'
+            self.admin_id = str(self.user.id)
+            self.current_client_id = None  # Will be set when admin opens a client chat
             
             # Join admin room group
             await self.channel_layer.group_add(
@@ -244,11 +246,18 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
         try:
             logger.info(f'Admin {self.user.email if hasattr(self, "user") else "Unknown"} disconnected from chat (code: {close_code})')
             
-            # Leave room group
+            # Leave main admin room group
             await self.channel_layer.group_discard(
                 self.room_group_name,
                 self.channel_name
             )
+            
+            # Leave client-specific room if any
+            if hasattr(self, 'current_client_room_name') and self.current_client_room_name:
+                await self.channel_layer.group_discard(
+                    self.current_client_room_name,
+                    self.channel_name
+                )
         except Exception as e:
             logger.error(f'Error in admin chat disconnect: {e}')
 
@@ -257,7 +266,29 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
             text_data_json = json.loads(text_data)
             message_type = text_data_json.get('type')
             
-            if message_type == 'admin_message':
+            if message_type == 'admin_view_client':
+                # Admin is viewing a specific client's chat
+                client_id = text_data_json.get('client_id')
+                if client_id:
+                    # Leave previous client's room if any
+                    if hasattr(self, 'current_client_room_name') and self.current_client_room_name:
+                        await self.channel_layer.group_discard(
+                            self.current_client_room_name,
+                            self.channel_name
+                        )
+                    
+                    # Join new client's admin room
+                    self.current_client_id = str(client_id)
+                    self.current_client_room_name = f'admin_client_{client_id}'
+                    
+                    await self.channel_layer.group_add(
+                        self.current_client_room_name,
+                        self.channel_name
+                    )
+                    
+                    logger.info(f'Admin {self.user.email} is viewing client {client_id}')
+            
+            elif message_type == 'admin_message':
                 message = text_data_json['message']
                 recipient_id = text_data_json.get('recipient_id')
                 timestamp = text_data_json.get('timestamp', datetime.now().isoformat())
@@ -280,6 +311,7 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                 
                 # If specific recipient, send to their room
                 if recipient_id:
+                    # Send message to client
                     await self.channel_layer.group_send(
                         f'client_{recipient_id}',
                         {
@@ -291,7 +323,23 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
                         }
                     )
                     
-                    # Broadcast admin message to all other admins so they see the reply
+                    # Broadcast admin message to all OTHER admins viewing this specific client (exclude sender)
+                    await self.channel_layer.group_send(
+                        f'admin_client_{recipient_id}',
+                        {
+                            'type': 'admin_message_to_client',
+                            'message': message,
+                            'recipient_id': recipient_id,
+                            'sender_name': admin_sender_name,
+                            'sender_id': self.user.id,
+                            'sender_email': self.user.email,
+                            'timestamp': timestamp,
+                            'message_id': message_obj.id if message_obj else None,
+                            'exclude_sender_channel': self.channel_name
+                        }
+                    )
+                    
+                    # Also broadcast to main admin room for status updates
                     await self.channel_layer.group_send(
                         'admin_chat_room',
                         {
@@ -375,6 +423,25 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
             'recipient_id': event['recipient_id'],
             'sender_name': event.get('sender_name', 'Unknown Admin'),
             'sender_id': event.get('sender_id'),
+            'timestamp': event.get('timestamp', datetime.now().isoformat()),
+            'message_id': event.get('message_id')
+        }))
+
+    async def admin_message_to_client(self, event):
+        """Receive admin message targeted to specific client - visible to all OTHER admins viewing that client."""
+        # Check if this message should be excluded for the sender
+        exclude_sender_channel = event.get('exclude_sender_channel')
+        if exclude_sender_channel and self.channel_name == exclude_sender_channel:
+            # Don't send this message back to the sender
+            return
+        
+        await self.send(text_data=json.dumps({
+            'type': 'admin_message_to_client',
+            'message': event['message'],
+            'recipient_id': event['recipient_id'],
+            'sender_name': event.get('sender_name', 'Unknown Admin'),
+            'sender_id': event.get('sender_id'),
+            'sender_email': event.get('sender_email', 'Unknown'),
             'timestamp': event.get('timestamp', datetime.now().isoformat()),
             'message_id': event.get('message_id')
         }))

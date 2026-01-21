@@ -73,9 +73,9 @@ def get_messages(request):
         last_id = int(request.GET.get('last_id', 0))
         limit = int(request.GET.get('limit', 50))
         
-        # Get messages where user is sender or recipient
+        # Get messages where user is sender (only client messages, not admin messages) or recipient
         messages_queryset = ChatMessage.objects.filter(
-            Q(sender=user) | Q(recipient=user)
+            Q(sender=user, sender_type='client') | Q(recipient=user)
         ).filter(id__gt=last_id).order_by('created_at')
         
         # Get the last ID before slicing
@@ -162,6 +162,7 @@ def admin_send_message(request):
 def admin_get_messages(request):
     """
     Admin endpoint to retrieve all messages or messages from a specific user.
+    Shows all messages (from client and all admins) for a specific client.
     """
     try:
         user_id = request.GET.get('user_id')
@@ -169,7 +170,7 @@ def admin_get_messages(request):
         limit = int(request.GET.get('limit', 50))
         
         if user_id:
-            # Get conversation with specific user
+            # Get conversation with specific user (client)
             try:
                 target_user = User.objects.get(id=user_id)
             except User.DoesNotExist:
@@ -178,18 +179,19 @@ def admin_get_messages(request):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Get messages where:
-            # 1. Client sent to this admin specifically, OR
-            # 2. Client sent a general message (recipient=None), OR  
-            # 3. This admin sent to the client
+            # Get ALL messages for this client conversation:
+            # 1. Messages FROM the client (to any admin)
+            # 2. Messages FROM any admin TO this specific client
+            # This ensures all admins viewing the same client see all replies
+            # EXCLUDE: Messages from other clients
             messages_queryset = ChatMessage.objects.filter(
-                Q(sender=target_user) |  # Any message sent by the client
-                Q(sender=request.user, recipient=target_user)  # Messages sent by admin to this client
+                Q(sender=target_user, sender_type='client') |  # Messages sent BY this client
+                Q(recipient=target_user, sender_type='admin')  # Messages sent BY any admin TO this client
             ).filter(id__gt=last_id).order_by('created_at')
         else:
-            # Get all messages sent to this admin
+            # Get all messages sent to this admin OR messages from clients (but not sent by this admin)
             messages_queryset = ChatMessage.objects.filter(
-                Q(recipient=request.user) | Q(sender_type='client')
+                Q(recipient=request.user) | Q(sender_type='client', recipient__isnull=True)
             ).filter(id__gt=last_id).order_by('-created_at')
         
         # Get the last ID before slicing
