@@ -166,12 +166,12 @@ def _whitenoise_add_security_headers(headers, path, url):
     cdns = [s for s in env('CSP_TRUSTED_CDNS', default='').split(',') if s]
     payments = [s for s in env('CSP_PAYMENT_GATEWAYS', default='').split(',') if s]
 
-    script_src = "'self' 'unsafe-inline'"
+    script_src = "'self'"
     if cdns or payments:
-        script_src = "'self' 'unsafe-inline' " + ' '.join(cdns + payments)
+        script_src = "'self' " + ' '.join(cdns + payments)
     style_src = "'self' 'unsafe-inline'"
     if cdns:
-        style_src = "'self' 'unsafe-inline' " + ' '.join(cdns)
+        style_src = "'self' " + ' '.join(cdns)
     img_src = "'self' data:"
     connect_src = "'self'"
     if payments:
@@ -186,8 +186,8 @@ def _whitenoise_add_security_headers(headers, path, url):
 
     # In DEBUG allow inline for local development (matches middleware behaviour)
     if DEBUG:
-        script_src = "'self' 'unsafe-inline' 'unsafe-eval' " + ((' '.join(cdns + payments)) if (cdns or payments) else '')
-        style_src = "'self' 'unsafe-inline' " + ((' '.join(cdns)) if cdns else '')
+        script_src = "'self' " + ((' '.join(cdns + payments)) if (cdns or payments) else '')
+        style_src = "'self' " + ((' '.join(cdns)) if cdns else '')
 
     csp_parts = [
         "default-src 'self'",
@@ -758,6 +758,17 @@ REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_F
 
 
 #  Hosts
+ROOT_HOSTCONF = 'brokerBackend.hosts'
+DEFAULT_HOST = 'www'
+import socket
+if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+   PARENT_HOST = 'localhost:8000'
+else:
+    PARENT_HOST = 'vtindex.com'
+HOST_PORT = '8000'
+HOST_SCHEME = 'http'
+
+# Hosts
 # ROOT_HOSTCONF = 'brokerBackend.hosts'
 # DEFAULT_HOST = 'www'
 # import socket
@@ -769,11 +780,11 @@ REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_F
 # HOST_SCHEME = 'http'
 
 # Hosts
-ROOT_HOSTCONF = 'brokerBackend.hosts'
-DEFAULT_HOST = 'www'
-PARENT_HOST = 'hi5trader.com'
-HOST_PORT = '8000'
-HOST_SCHEME = 'http'
+# ROOT_HOSTCONF = 'brokerBackend.hosts'
+# DEFAULT_HOST = 'www'
+# PARENT_HOST = 'hi5trader.com'
+# HOST_PORT = '8000'
+# HOST_SCHEME = 'http'
 
 
 # Admin Settings
@@ -938,6 +949,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'cleanup_old_notifications',
         'schedule': crontab(hour=0, minute=0),  # Run every day at midnight
         'args': (7,),  # Delete notifications read more than 7 days ago
+    },
+    'cleanup-old-chat-messages-hourly': {
+        'task': 'cleanup_old_chat_messages',
+        'schedule': crontab(minute=0),  # Run every hour at the top of the hour
+        'args': (24,),  # Delete chat messages older than 24 hours
+        'options': {
+            'description': 'Automatically delete chat messages older than 24 hours'
+        }
     },
     # Add other periodic tasks here as needed
 }
