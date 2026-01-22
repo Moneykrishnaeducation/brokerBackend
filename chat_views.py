@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.db.models import Q
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
@@ -66,6 +66,7 @@ def send_message(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
+@throttle_classes([])
 def get_messages(request):
     """
     Retrieve chat messages for the authenticated user.
@@ -165,6 +166,7 @@ def admin_send_message(request):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, IsAdminOrManager])
+@throttle_classes([])
 def admin_get_messages(request):
     """
     Admin endpoint to retrieve all messages or messages from a specific user.
