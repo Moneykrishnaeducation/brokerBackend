@@ -19,7 +19,6 @@ from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
-User = get_user_model()
 
 
 @api_view(['POST'])
@@ -128,8 +127,8 @@ def admin_send_message(request):
         recipient = None
         if recipient_id:
             try:
-                recipient = User.objects.get(id=recipient_id)
-            except User.DoesNotExist:
+                recipient = get_user_model().objects.get(id=recipient_id)
+            except get_user_model().DoesNotExist:
                 return Response(
                     {'status': 'error', 'message': 'Recipient not found'},
                     status=status.HTTP_404_NOT_FOUND
@@ -180,8 +179,8 @@ def admin_get_messages(request):
         if user_id:
             # Get conversation with specific user (client)
             try:
-                target_user = User.objects.get(id=user_id)
-            except User.DoesNotExist:
+                target_user = get_user_model().objects.get(id=user_id)
+            except get_user_model().DoesNotExist:
                 return Response(
                     {'status': 'error', 'message': 'User not found'},
                     status=status.HTTP_404_NOT_FOUND
@@ -235,8 +234,8 @@ def mark_client_messages_as_read(request):
         client_id = request.data.get('client_id')
         
         try:
-            client = User.objects.get(id=client_id)
-        except User.DoesNotExist:
+            client = get_user_model().objects.get(id=client_id)
+        except get_user_model().DoesNotExist:
             return Response(
                 {'status': 'error', 'message': 'Client not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -337,11 +336,11 @@ def clear_chat(request):
         if user_id:
             # Clear chat with specific user
             try:
-                target_user = User.objects.get(id=user_id)
+                target_user = get_user_model().objects.get(id=user_id)
                 ChatMessage.objects.filter(
                     Q(sender=target_user) | Q(sender=request.user, recipient=target_user)
                 ).delete()
-            except User.DoesNotExist:
+            except get_user_model().DoesNotExist:
                 return Response(
                     {'status': 'error', 'message': 'User not found'},
                     status=status.HTTP_404_NOT_FOUND
@@ -506,8 +505,8 @@ def mark_admin_client_messages_as_read(request):
             )
         
         try:
-            client = User.objects.get(id=client_id)
-        except User.DoesNotExist:
+            client = get_user_model().objects.get(id=client_id)
+        except get_user_model().DoesNotExist:
             return Response(
                 {'status': 'error', 'message': 'Client not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -612,7 +611,7 @@ def get_admin_profiles(request):
             return Response({'profiles': []})
         
         # Get admins with their profile pictures
-        admins = User.objects.filter(id__in=admin_ids).values('id', 'profile_pic')
+        admins = get_user_model().objects.filter(id__in=admin_ids).values('id', 'profile_pic')
         
         return Response({
             'profiles': [

@@ -11,7 +11,6 @@ from datetime import datetime
 import uuid
 
 logger = logging.getLogger(__name__)
-User = get_user_model()
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -499,6 +498,7 @@ class AdminChatConsumer(AsyncWebsocketConsumer):
     def _get_user(self, user_id):
         """Get user by ID."""
         try:
+            User = get_user_model()
             return User.objects.get(id=user_id)
-        except User.DoesNotExist:
+        except Exception:
             return None
