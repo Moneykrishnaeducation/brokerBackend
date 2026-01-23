@@ -10,7 +10,7 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
-from adminPanel.permissions import IsAdminOrManager
+from adminPanel.permissions import IsAdminOrManager, IsAdmin
 from adminPanel.models import ChatMessage
 from adminPanel.serializers import ChatMessageSerializer
 from django.contrib.auth import get_user_model
@@ -106,7 +106,7 @@ def get_messages(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminOrManager])
+@permission_classes([IsAuthenticated, IsAdmin])
 def admin_send_message(request):
     """
     Admin endpoint to send messages to clients (supports text and/or image).
@@ -165,7 +165,7 @@ def admin_send_message(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminOrManager])
+@permission_classes([IsAuthenticated, IsAdmin])
 @throttle_classes([])
 def admin_get_messages(request):
     """
@@ -326,7 +326,7 @@ def get_unread_count(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminOrManager])
+@permission_classes([IsAuthenticated, IsAdmin])
 def clear_chat(request):
     """
     Clear chat history (admin only).
@@ -429,7 +429,7 @@ def delete_message(request, message_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, IsAdmin])
 def trigger_chat_cleanup(request):
     """
     Manually trigger the cleanup of old chat messages (admin only).
@@ -448,10 +448,10 @@ def trigger_chat_cleanup(request):
         # Get hours parameter from request
         hours = request.data.get('hours', 24)
         
-        # Import and run the cleanup task
-        from adminPanel.tasks.chat_cleanup import cleanup_old_chat_messages
+        # Import and run the cleanup task using background thread
+        from adminPanel.chat_cleanup_thread import chat_cleanup_thread
         
-        result = cleanup_old_chat_messages(hours=hours)
+        result = chat_cleanup_thread.force_cleanup(hours=hours)
         
         return Response(result)
         
@@ -491,7 +491,7 @@ def mark_client_messages_as_read(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminOrManager])
+@permission_classes([IsAuthenticated, IsAdmin])
 def mark_admin_client_messages_as_read(request):
     """
     Admin endpoint to mark all messages to a specific client as read.
