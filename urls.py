@@ -44,6 +44,10 @@ urlpatterns = [
     path('client/api/send-reset-otp/', csrf_exempt(client_auth_views.send_reset_otp_view)),
     path('api/send-reset-otp/', csrf_exempt(client_auth_views.send_reset_otp_view)),
     path('send-reset-otp/', csrf_exempt(client_auth_views.send_reset_otp_view)),
+    # Reset password endpoint
+    path('client/api/reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
+    path('api/reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
+    path('reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
 
 
     # NOTE: Do not serve `index.html` at project root globally — admin SPA should be accessible
