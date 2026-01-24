@@ -164,7 +164,7 @@ def admin_send_message(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdmin])
+@permission_classes([IsAuthenticated, IsAdminOrManager])
 @throttle_classes([])
 def admin_get_messages(request):
     """
