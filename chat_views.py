@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 def send_message(request):
     """
     Send a chat message from client to admin (supports text and/or image).
+    Validates image files before storing.
     """
     try:
         data = request.data
@@ -38,6 +39,26 @@ def send_message(request):
                 {'status': 'error', 'message': 'Message or image is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Deep-validate image attachment if provided
+        if image_file:
+            try:
+                from clientPanel.views.views import validate_upload_file
+            except Exception:
+                validate_upload_file = None
+            
+            if validate_upload_file is not None:
+                is_valid, err = validate_upload_file(image_file, max_size_mb=10)
+                if not is_valid:
+                    return Response(
+                        {'status': 'error', 'message': f'Invalid image: {err}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                try:
+                    logger.warning('validate_upload_file not available; skipping deep image validation')
+                except Exception:
+                    pass
         
         # Create the chat message
         chat_message = ChatMessage.objects.create(
@@ -109,6 +130,7 @@ def get_messages(request):
 def admin_send_message(request):
     """
     Admin endpoint to send messages to clients (supports text and/or image).
+    Validates image files before storing.
     """
     try:
         data = request.data
@@ -122,6 +144,26 @@ def admin_send_message(request):
                 {'status': 'error', 'message': 'Message or image is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Deep-validate image attachment if provided
+        if image_file:
+            try:
+                from clientPanel.views.views import validate_upload_file
+            except Exception:
+                validate_upload_file = None
+            
+            if validate_upload_file is not None:
+                is_valid, err = validate_upload_file(image_file, max_size_mb=10)
+                if not is_valid:
+                    return Response(
+                        {'status': 'error', 'message': f'Invalid image: {err}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            else:
+                try:
+                    logger.warning('validate_upload_file not available; skipping deep image validation')
+                except Exception:
+                    pass
         
         # Get recipient if provided
         recipient = None
