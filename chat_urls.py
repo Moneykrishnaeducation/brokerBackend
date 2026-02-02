@@ -4,6 +4,7 @@ Chat URL patterns for HTTP endpoints and WebSocket routing.
 
 from django.urls import path
 from . import chat_views
+from adminPanel.views import manager_admin_chat_views
 
 urlpatterns = [
     # Client endpoints
@@ -23,4 +24,13 @@ urlpatterns = [
     path('api/chat/admin/cleanup/', chat_views.trigger_chat_cleanup, name='chat_admin_cleanup'),
     path('api/chat/admin/stats/', chat_views.get_chat_stats, name='chat_admin_stats'),
     path('api/chat/admin/profiles/', chat_views.get_admin_profiles, name='chat_admin_profiles'),
+    
+    # Manager endpoints
+    path('api/chat/manager/messages/', manager_admin_chat_views.get_manager_messages, name='chat_manager_messages'),
+    path('api/chat/manager/send_message/', manager_admin_chat_views.send_manager_message, name='chat_manager_send'),
+    path('api/chat/admin/manager_messages/', manager_admin_chat_views.get_admin_manager_messages, name='chat_admin_manager_messages'),
+    path('api/chat/admin/send_to_manager/', manager_admin_chat_views.send_admin_reply_to_manager, name='chat_admin_send_to_manager'),
+    path('api/chat/admin/mark_manager_as_read/', manager_admin_chat_views.mark_admin_manager_messages_as_read, name='chat_admin_mark_manager_read'),
+    path('api/chat/manager/delete/<int:message_id>/', manager_admin_chat_views.delete_manager_message, name='chat_manager_delete'),
+    path('api/chat/manager/mark_as_read/', manager_admin_chat_views.mark_manager_messages_as_read, name='chat_manager_mark_read'),
 ]
