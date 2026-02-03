@@ -135,7 +135,8 @@ def admin_send_message(request):
     try:
         data = request.data
         message_text = data.get('message', '').strip()
-        recipient_id = data.get('recipient_id')
+        # Get recipient_id from POST data or query params
+        recipient_id = data.get('recipient_id') or request.GET.get('recipient_id')
         image_file = request.FILES.get('image')
         
         # Allow message with text, image, or both
@@ -210,16 +211,20 @@ def admin_send_message(request):
 @throttle_classes([])
 def admin_get_messages(request):
     """
-    Admin endpoint to retrieve all messages or messages from a specific user.
-    Shows all messages (from client and all admins) for a specific client.
+    Admin endpoint to retrieve messages - unified for both clients and managers.
+    Supports:
+    - ?user_id={id} - Get messages with specific client
+    - ?manager_id={id} - Get messages with specific manager
+    - No params - Get all messages
     """
     try:
         user_id = request.GET.get('user_id')
+        manager_id = request.GET.get('manager_id')
         last_id = int(request.GET.get('last_id', 0))
         limit = int(request.GET.get('limit', 50))
         
         if user_id:
-            # Get conversation with specific user (client)
+            # Get conversation with specific client
             try:
                 target_user = get_user_model().objects.get(id=user_id)
             except get_user_model().DoesNotExist:
@@ -231,16 +236,33 @@ def admin_get_messages(request):
             # Get ALL messages for this client conversation:
             # 1. Messages FROM the client (to any admin)
             # 2. Messages FROM any admin TO this specific client
-            # This ensures all admins viewing the same client see all replies
-            # EXCLUDE: Messages from other clients
             messages_queryset = ChatMessage.objects.filter(
-                Q(sender=target_user, sender_type='client') |  # Messages sent BY this client
-                Q(recipient=target_user, sender_type='admin')  # Messages sent BY any admin TO this client
+                Q(sender=target_user, sender_type='client') |
+                Q(recipient=target_user, sender_type='admin')
             ).filter(id__gt=last_id).order_by('created_at')
-        else:
-            # Get all messages sent to this admin OR messages from clients (but not sent by this admin)
+            
+        elif manager_id:
+            # Get conversation with specific manager
+            try:
+                target_user = get_user_model().objects.get(id=manager_id)
+            except get_user_model().DoesNotExist:
+                return Response(
+                    {'status': 'error', 'message': 'Manager not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get ALL messages for this manager conversation:
+            # 1. Messages FROM the manager (to any admin)
+            # 2. Messages FROM any admin TO this specific manager
             messages_queryset = ChatMessage.objects.filter(
-                Q(recipient=request.user) | Q(sender_type='client', recipient__isnull=True)
+                Q(sender=target_user, sender_type='manager') |
+                Q(recipient=target_user, sender_type='admin')
+            ).filter(id__gt=last_id).order_by('created_at')
+            
+        else:
+            # Get all messages sent to this admin OR messages from clients/managers
+            messages_queryset = ChatMessage.objects.filter(
+                Q(recipient=request.user) | Q(sender_type__in=['client', 'manager'], recipient__isnull=True)
             ).filter(id__gt=last_id).order_by('-created_at')
         
         # Get the last ID before slicing
@@ -554,17 +576,10 @@ def mark_admin_client_messages_as_read(request):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Mark all messages sent by the client to this admin as read
+        # Mark all messages sent by the client to any admin as read
         ChatMessage.objects.filter(
             sender=client,
-            recipient=request.user,
-            is_read=False
-        ).update(is_read=True)
-        
-        # Also mark general messages from this client as read
-        ChatMessage.objects.filter(
-            sender=client,
-            recipient__isnull=True,
+            sender_type='client',
             is_read=False
         ).update(is_read=True)
         
@@ -667,6 +682,84 @@ def get_admin_profiles(request):
         
     except Exception as e:
         logger.error(f'Error getting admin profiles: {e}')
+        return Response(
+            {'status': 'error', 'message': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdmin])
+@throttle_classes([])
+def get_admin_contacts(request):
+    """
+    Get all clients that the admin can chat with.
+    Returns list of clients with basic info.
+    """
+    try:
+        User = get_user_model()
+        
+        # Get all clients ordered by recent activity
+        clients = User.objects.filter(
+            role='client'
+        ).values(
+            'id', 'first_name', 'last_name', 'email'
+        ).order_by('-date_joined')
+        
+        contacts = []
+        for client in clients:
+            full_name = f"{client['first_name']} {client['last_name']}".strip()
+            contacts.append({
+                'id': client['id'],
+                'name': full_name if full_name else client['email'],
+                'email': client['email']
+            })
+        
+        return Response({
+            'status': 'success',
+            'contacts': contacts
+        })
+    except Exception as e:
+        logger.error(f'Error getting admin contacts: {e}')
+        return Response(
+            {'status': 'error', 'message': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, IsAdmin])
+@throttle_classes([])
+def get_admin_managers(request):
+    """
+    Get all managers that the admin can chat with.
+    Returns list of managers with basic info.
+    """
+    try:
+        User = get_user_model()
+        
+        # Get all managers
+        managers = User.objects.filter(
+            role='manager'
+        ).values(
+            'id', 'first_name', 'last_name', 'email'
+        ).order_by('-date_joined')
+        
+        manager_list = []
+        for manager in managers:
+            full_name = f"{manager['first_name']} {manager['last_name']}".strip()
+            manager_list.append({
+                'id': manager['id'],
+                'name': full_name if full_name else manager['email'],
+                'email': manager['email']
+            })
+        
+        return Response({
+            'status': 'success',
+            'managers': manager_list
+        })
+    except Exception as e:
+        logger.error(f'Error getting admin managers: {e}')
         return Response(
             {'status': 'error', 'message': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

@@ -24,6 +24,8 @@ urlpatterns = [
     path('api/chat/admin/cleanup/', chat_views.trigger_chat_cleanup, name='chat_admin_cleanup'),
     path('api/chat/admin/stats/', chat_views.get_chat_stats, name='chat_admin_stats'),
     path('api/chat/admin/profiles/', chat_views.get_admin_profiles, name='chat_admin_profiles'),
+    path('api/chat/admin/contacts/', chat_views.get_admin_contacts, name='chat_admin_contacts'),
+    path('api/chat/admin/managers/', chat_views.get_admin_managers, name='chat_admin_managers'),
     
     # Manager endpoints
     path('api/chat/manager/messages/', manager_admin_chat_views.get_manager_messages, name='chat_manager_messages'),
