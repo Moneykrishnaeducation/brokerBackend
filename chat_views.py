@@ -392,34 +392,106 @@ def get_unread_count(request):
 @permission_classes([IsAuthenticated, IsAdmin])
 def clear_chat(request):
     """
-    Clear chat history (admin only).
+    Clear chat history with a specific user (admin only).
+    Deletes all messages in the conversation between the admin and the specified user.
+    
+    Request body:
+    - user_id (required): The ID of the user to end chat with
     """
     try:
         user_id = request.data.get('user_id')
         
-        if user_id:
-            # Clear chat with specific user
-            try:
-                target_user = get_user_model().objects.get(id=user_id)
-                ChatMessage.objects.filter(
-                    Q(sender=target_user) | Q(sender=request.user, recipient=target_user)
-                ).delete()
-            except get_user_model().DoesNotExist:
-                return Response(
-                    {'status': 'error', 'message': 'User not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-        else:
-            # Clear all chat
-            ChatMessage.objects.all().delete()
+        if not user_id:
+            return Response(
+                {'status': 'error', 'message': 'user_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            target_user = get_user_model().objects.get(id=user_id)
+        except get_user_model().DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Delete all messages in the conversation between admin and this specific user
+        # This includes:
+        # 1. Messages from the target user to the admin (client messages have recipient=NULL)
+        # 2. Messages from the admin to the target user
+        deleted_count, _ = ChatMessage.objects.filter(
+            Q(sender=target_user) |  # Messages from user (client messages have recipient=NULL)
+            Q(sender=request.user, recipient=target_user)     # Messages from admin to user
+        ).delete()
+        
+        logger.info(f"Admin {request.user.id} ended chat with user {target_user.id}. Deleted {deleted_count} messages.")
         
         return Response({
             'status': 'success',
-            'message': 'Chat history cleared'
+            'message': 'Chat conversation ended',
+            'deleted_count': deleted_count,
+            'user_id': target_user.id,
+            'user_email': target_user.email
         })
         
     except Exception as e:
         logger.error(f'Error clearing chat: {e}')
+        return Response(
+            {'status': 'error', 'message': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsAdmin])
+def end_chat(request):
+    """
+    End chat conversation with a user (admin only).
+    When an admin clicks "end chat", all related messages with that user are deleted.
+    
+    Request body:
+    - user_id (required): The ID of the user to end chat with
+    
+    Response:
+    - deleted_count: Number of messages deleted
+    - user_id: The ID of the user
+    - user_email: Email of the user
+    """
+    try:
+        user_id = request.data.get('user_id')
+        
+        if not user_id:
+            return Response(
+                {'status': 'error', 'message': 'user_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            target_user = get_user_model().objects.get(id=user_id)
+        except get_user_model().DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': f'User with ID {user_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Delete all messages in the conversation between admin and this specific user
+        deleted_count, _ = ChatMessage.objects.filter(
+            Q(sender=target_user) |  # Messages from user (client messages have recipient=NULL)
+            Q(sender=request.user, recipient=target_user)     # Messages from admin to user
+        ).delete()
+        
+        logger.info(f"Admin {request.user.id} ({request.user.email}) ended chat with user {target_user.id} ({target_user.email}). Deleted {deleted_count} messages.")
+        
+        return Response({
+            'status': 'success',
+            'message': f'Chat conversation with {target_user.email} has been ended and all messages deleted',
+            'deleted_count': deleted_count,
+            'user_id': target_user.id,
+            'user_email': target_user.email
+        })
+        
+    except Exception as e:
+        logger.error(f'Error ending chat: {e}')
         return Response(
             {'status': 'error', 'message': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
