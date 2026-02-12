@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
 # Security
 SECRET_KEY = env('DJANGO_SECRET_KEY', default='change-me-in-production')
 DEBUG = env.bool('DJANGO_DEBUG', default=False)
@@ -358,7 +359,10 @@ SERVE_STATIC_FILES = True
 
 # Media Files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Store uploads OUTSIDE the project
+MEDIA_ROOT = r"C:\crn_storage\media"      # Windows
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -756,22 +760,14 @@ REPORTS_EMAIL_HOST_USER = env('REPORTS_EMAIL_HOST_USER', default=EMAIL_HOST_USER
 REPORTS_EMAIL_HOST_PASSWORD = env('REPORTS_EMAIL_HOST_PASSWORD', default=EMAIL_HOST_PASSWORD)
 REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_FROM_EMAIL)
 
-
-# Hosts
-# ROOT_HOSTCONF = 'brokerBackend.hosts'
-# DEFAULT_HOST = 'www'
-# import socket
-# if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
-#    PARENT_HOST = 'localhost:8000'
-# else:
-#     PARENT_HOST = 'vtindex.com'
-# HOST_PORT = '8000'
-# HOST_SCHEME = 'http'
-
 # Hosts
 ROOT_HOSTCONF = 'brokerBackend.hosts'
 DEFAULT_HOST = 'www'
-PARENT_HOST = 'hi5trader.com'
+import socket
+if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+    PARENT_HOST = 'localhost'
+else:
+    PARENT_HOST = 'hi5trader.com'
 HOST_PORT = '8000'
 HOST_SCHEME = 'http'
 

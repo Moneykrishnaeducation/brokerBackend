@@ -1,5 +1,6 @@
 from django.apps import AppConfig
 import threading
+import logging
 
 
 class BrokerBackendConfig(AppConfig):
@@ -71,68 +72,146 @@ class BrokerBackendConfig(AppConfig):
             pass
 
     def start_mt5_balance_refresher(self):
-        """Start a background thread that refreshes MT5 balances/equity every 5 seconds."""
+        """Start an optimized background thread that refreshes MT5 balances/equity."""
         try:
             def refresher():
                 import time
                 from django.db import connection
+                from django.db import transaction
 
                 # Import here to avoid app-loading issues
                 try:
                     from adminPanel.mt5.services import MT5ManagerActions
                     from adminPanel.models import TradingAccount
                 except Exception:
-                    # import failed, exit thread
                     return
 
+                # Configuration
+                REFRESH_INTERVAL = 2  # seconds between refresh cycles
+                BATCH_SIZE = 50  # accounts to process in each batch
+                ACCOUNT_DELAY = 0.01  # minimal delay between accounts (10ms)
+                MAX_RETRIES = 3
+                
+                logger = logging.getLogger('mt5_refresher')
+                logger.info("MT5 Balance Refresher started with optimized performance")
+
                 while True:
+                    cycle_start = time.time()
+                    processed_count = 0
+                    updated_count = 0
+                    
                     try:
-                        # Ensure DB table exists before proceeding
+                        # Ensure DB table exists
                         try:
                             table_names = connection.introspection.table_names()
                             if 'adminPanel_tradingaccount' not in table_names:
-                                time.sleep(5)
+                                time.sleep(REFRESH_INTERVAL)
                                 continue
                         except Exception:
-                            time.sleep(5)
+                            time.sleep(REFRESH_INTERVAL)
                             continue
 
-                        mt5 = MT5ManagerActions()
-                        if not getattr(mt5, 'manager', None):
-                            time.sleep(5)
+                        # Initialize MT5 manager with retry logic
+                        mt5 = None
+                        for retry in range(MAX_RETRIES):
+                            try:
+                                mt5 = MT5ManagerActions()
+                                if getattr(mt5, 'manager', None):
+                                    break
+                                time.sleep(1)  # Short retry delay
+                            except Exception as e:
+                                if retry == MAX_RETRIES - 1:
+                                    logger.warning(f"Failed to initialize MT5 after {MAX_RETRIES} retries: {e}")
+                                time.sleep(1)
+                        
+                        if not mt5 or not getattr(mt5, 'manager', None):
+                            time.sleep(REFRESH_INTERVAL)
                             continue
 
-                        qs = TradingAccount.objects.all().only('id', 'account_id')
-                        for acc in qs.iterator():
-                            try:
-                                login_id = int(acc.account_id)
-                            except Exception:
-                                continue
-                            try:
-                                bal = mt5.get_balance(login_id)
-                                eq = mt5.get_equity(login_id)
-                                changed = False
-                                if bal is not None and float(getattr(acc, 'balance', 0)) != float(bal):
-                                    acc.balance = bal
-                                    changed = True
-                                if eq is not None and float(getattr(acc, 'equity', 0)) != float(eq):
-                                    acc.equity = eq
-                                    changed = True
-                                if changed:
-                                    acc.save(update_fields=['balance', 'equity'])
-                            except Exception:
-                                # per-account error ignored
-                                pass
-                            time.sleep(0.05)
-                    except Exception:
-                        # unexpected error; sleep then continue
-                        time.sleep(5)
+                        # Process accounts in batches for better performance
+                        accounts = TradingAccount.objects.filter(is_enabled=True).only('id', 'account_id', 'balance', 'equity')
+                        total_accounts = accounts.count()
+                        
+                        if total_accounts == 0:
+                            time.sleep(REFRESH_INTERVAL)
+                            continue
 
-            t = threading.Thread(target=refresher, name='broker-mt5-refresher', daemon=True)
+                        # Process in batches
+                        for batch_start in range(0, total_accounts, BATCH_SIZE):
+                            batch_accounts = accounts[batch_start:batch_start + BATCH_SIZE]
+                            updates = []
+                            
+                            for acc in batch_accounts:
+                                try:
+                                    login_id = int(acc.account_id)
+                                    processed_count += 1
+                                    
+                                    # Use optimized single API call for both balance and equity
+                                    account_data = mt5.get_account_data(login_id, use_cache=True)
+                                    bal = account_data['balance']
+                                    eq = account_data['equity']
+                                    
+                                    # Check if values actually changed to minimize DB writes
+                                    current_balance = float(getattr(acc, 'balance', 0) or 0)
+                                    current_equity = float(getattr(acc, 'equity', 0) or 0)
+                                    
+                                    balance_changed = abs(current_balance - bal) > 0.01  # More than 1 cent
+                                    equity_changed = abs(current_equity - eq) > 0.01
+                                    
+                                    if balance_changed or equity_changed:
+                                        acc.balance = bal
+                                        acc.equity = eq
+                                        updates.append(acc)
+                                        updated_count += 1
+                                    
+                                except (ValueError, TypeError):
+                                    # Invalid account_id, skip
+                                    continue
+                                except Exception:
+                                    # Individual account error, continue with others
+                                    continue
+                                
+                                # Minimal delay to prevent API overload
+                                if ACCOUNT_DELAY > 0:
+                                    time.sleep(ACCOUNT_DELAY)
+                            
+                            # Bulk update changed accounts
+                            if updates:
+                                try:
+                                    with transaction.atomic():
+                                        TradingAccount.objects.bulk_update(updates, ['balance', 'equity'])
+                                except Exception as e:
+                                    logger.warning(f"Bulk update failed for batch: {e}")
+                                    # Fallback to individual saves
+                                    for acc in updates:
+                                        try:
+                                            acc.save(update_fields=['balance', 'equity'])
+                                        except Exception:
+                                            pass
+                    
+                    except Exception as e:
+                        logger.error(f"Unexpected error in refresher cycle: {e}")
+                    
+                    # Performance logging every 50 cycles (approximately every 100 seconds)
+                    cycle_end = time.time()
+                    cycle_duration = cycle_end - cycle_start
+                    
+                    if processed_count > 0 and (int(cycle_end) % 100 == 0):  # Log every ~100 seconds
+                        logger.info(f"MT5 Refresher: {processed_count} accounts processed, {updated_count} updated in {cycle_duration:.2f}s")
+                    
+                    # Dynamic sleep to maintain consistent refresh intervals
+                    sleep_time = max(0, REFRESH_INTERVAL - cycle_duration)
+                    time.sleep(sleep_time)
+
+            t = threading.Thread(target=refresher, name='broker-mt5-refresher-optimized', daemon=True)
             t.start()
-        except Exception:
-            # Failed to start refresher; silently ignore
-            pass
+        except Exception as e:
+            # Failed to start refresher
+            try:
+                logger = logging.getLogger('mt5_refresher')
+                logger.error(f"Failed to start MT5 balance refresher: {e}")
+            except:
+                pass
 
     def start_log_rotation_thread(self):
         """Start the weekly/monthly log rotation thread."""
