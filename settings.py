@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 # Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
 # Security
 SECRET_KEY = env('DJANGO_SECRET_KEY', default='change-me-in-production')
 DEBUG = env.bool('DJANGO_DEBUG', default=False)
@@ -359,10 +358,7 @@ SERVE_STATIC_FILES = True
 
 # Media Files
 MEDIA_URL = '/media/'
-# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
-
-# Store uploads OUTSIDE the project
-MEDIA_ROOT = r"C:\crn_storage\media"      # Windows
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -376,14 +372,14 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://admin.localhost:8000",
     "http://client.localhost:8000",
-    "https://hi5trader.com",
-    "http://hi5trader.com",
-    "https://www.hi5trader.com",
-    "http://www.hi5trader.com",
-    "https://admin.hi5trader.com",
-    "http://admin.hi5trader.com",
-    "https://client.hi5trader.com",
-    "http://client.hi5trader.com",
+    "https://vtindex.com",
+    "http://vtindex.com",
+    "https://www.vtindex.com",
+    "http://www.vtindex.com",
+    "https://admin.vtindex.com",
+    "http://admin.vtindex.com",
+    "https://client.vtindex.com",
+    "http://client.vtindex.com",
     # Allow CheezePay checkout origin for redirects/iframe/connect
     "https://checkout.cheezepay.com",
     # Use host-only origin for the Cheezeepay API (no path)
@@ -416,19 +412,19 @@ CSRF_TRUSTED_ORIGINS = [
     'http://admin.localhost:8000',
     'http://client.localhost:8000',
     'http://www.localhost:8000',
-    'https://hi5trader.com',
-    'http://hi5trader.com',
-    'https://www.hi5trader.com',
-    'http://www.hi5trader.com',
-    'https://admin.hi5trader.com',
-    'http://admin.hi5trader.com',
-    'https://client.hi5trader.com',
-    'http://client.hi5trader.com',
+    'https://vtindex.com',
+    'http://vtindex.com',
+    'https://www.vtindex.com',
+    'http://www.vtindex.com',
+    'https://admin.vtindex.com',
+    'http://admin.vtindex.com',
+    'https://client.vtindex.com',
+    'http://client.vtindex.com',
     # Trusted origin for CheezePay callbacks/redirects
     "https://api-cheezeepay-india.cheezeebit.com",
     "https://checkout.cheezepay.com",
-    "https://client.hi5trader.com/static/client/page/main.html",
-    "https://admin.hi5trader.com/dashboard"
+    "https://client.vtindex.com/static/client/page/main.html",
+    "https://admin.vtindex.com/dashboard"
 ]
 
 # Content Security Policy configuration: lists of trusted CDN hosts and payment gateways
@@ -451,6 +447,13 @@ if _CHEEZEPAY_HOST not in CSP_PAYMENT_GATEWAYS:
     CSP_PAYMENT_GATEWAYS.append(_CHEEZEPAY_HOST)
 if _CHEEZEPAY_HOST not in CSP_TRUSTED_CDNS:
     CSP_TRUSTED_CDNS.append(_CHEEZEPAY_HOST)
+
+# Allow Tailwind CDN by default so static pages using the CDN can load when
+# the application sets a strict Content-Security-Policy. Can be overridden
+# by setting the CSP_TRUSTED_CDNS env var.
+_TAILWIND_CDN = 'https://cdn.tailwindcss.com'
+if _TAILWIND_CDN not in CSP_TRUSTED_CDNS:
+    CSP_TRUSTED_CDNS.append(_TAILWIND_CDN)
 
 CSRF_COOKIE_DOMAIN = '.localhost'  # Allow subdomains to access CSRF token
 CSRF_USE_SESSIONS = False  # Store CSRF token in cookie instead of session
@@ -532,8 +535,8 @@ PUBLIC_PATHS = [
 # ============================
 COOKIE_AUTO_CLEAR_CONFIG = {
     'enabled': True,
-    'access_token_lifetime': 3600,                     # 5 seconds (in seconds)
-    'refresh_token_lifetime': 3600,                    # 1 day (in seconds)
+    'access_token_lifetime': 36000,                     # 5 seconds (in seconds)
+    'refresh_token_lifetime': 36000,                    # 1 day (in seconds)
     'session_timeout': 1800,                            # 30 mins
     'remember_me_access_lifetime': 604800,              # 7 days
     'remember_me_refresh_lifetime': 2592000,            # 30 days
@@ -760,14 +763,22 @@ REPORTS_EMAIL_HOST_USER = env('REPORTS_EMAIL_HOST_USER', default=EMAIL_HOST_USER
 REPORTS_EMAIL_HOST_PASSWORD = env('REPORTS_EMAIL_HOST_PASSWORD', default=EMAIL_HOST_PASSWORD)
 REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_FROM_EMAIL)
 
+
+# Hosts
+# ROOT_HOSTCONF = 'brokerBackend.hosts'
+# DEFAULT_HOST = 'www'
+# import socket
+# if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+#    PARENT_HOST = 'localhost:8000'
+# else:
+#     PARENT_HOST = 'vtindex.com'
+# HOST_PORT = '8000'
+# HOST_SCHEME = 'http'
+
 # Hosts
 ROOT_HOSTCONF = 'brokerBackend.hosts'
 DEFAULT_HOST = 'www'
-import socket
-if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
-    PARENT_HOST = 'localhost'
-else:
-    PARENT_HOST = 'hi5trader.com'
+PARENT_HOST = 'vtindex.com'
 HOST_PORT = '8000'
 HOST_SCHEME = 'http'
 
@@ -791,6 +802,15 @@ SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = True
 
 COOKIE_SECURE_FLAG_OVERRIDE = env.bool('COOKIE_SECURE_FLAG_OVERRIDE', default=False)
+
+SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)
+
+SECURE_REDIRECT_EXEMPT = [
+    r'^client/cheezepay-notify/?$',
+]
+
+NOTIFY_URL = "https://client.vtindex.com/en/cheezee-pay/notifyurl"
+RETURN_URL = "https://client.vtindex.com/en/cheezee-pay/success"
 
 # Comma-separated list of IPs that are allowed to access admin endpoints when
 # the request is not coming from the `admin.` subdomain or localhost.
@@ -843,16 +863,16 @@ WEBSOCKET_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://admin.localhost:8000",
     "http://client.localhost:8000",
-    "https://hi5trader.com",
-    "http://hi5trader.com",
-    "https://www.hi5trader.com",
-    "http://www.hi5trader.com",
-    "https://admin.hi5trader.com",
-    "https://admin.hi5trader.com/dashboard",
-    "http://admin.hi5trader.com",
-    "https://client.hi5trader.com",
-    "https://client.hi5trader.com/static/client/page/main.html",
-    "http://client.hi5trader.com", # Add your production HTTPS domain
+    "https://vtindex.com",
+    "http://vtindex.com",
+    "https://www.vtindex.com",
+    "http://www.vtindex.com",
+    "https://admin.vtindex.com",
+    "https://admin.vtindex.com/dashboard",
+    "http://admin.vtindex.com",
+    "https://client.vtindex.com",
+    "https://client.vtindex.com/static/client/page/main.html",
+    "http://client.vtindex.com", # Add your production HTTPS domain
 ]
 
 # Optional: Redis Channel Layer (for production)
@@ -935,14 +955,7 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=0, minute=0),  # Run every day at midnight
         'args': (7,),  # Delete notifications read more than 7 days ago
     },
-    'cleanup-old-chat-messages-hourly': {
-        'task': 'cleanup_old_chat_messages',
-        'schedule': crontab(minute=0),  # Run every hour at the top of the hour
-        'args': (24,),  # Delete chat messages older than 24 hours
-        'options': {
-            'description': 'Automatically delete chat messages older than 24 hours'
-        }
-    },
+
     # Add other periodic tasks here as needed
 }
 
