@@ -49,6 +49,10 @@ urlpatterns = [
     path('client/api/reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
     path('api/reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
     path('reset-password/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
+    # Reset password CONFIRM compatibility aliases (some frontends post to /api/reset-password/confirm/)
+    path('client/api/reset-password/confirm/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
+    path('api/reset-password/confirm/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
+    path('reset-password/confirm/', csrf_exempt(client_auth_views.confirm_reset_password_view)),
 
     # NOTE: Do not serve `index.html` at project root globally — admin SPA should be accessible
     # only via the `admin` host (handled by django-hosts mapping to adminPanel.urls).
