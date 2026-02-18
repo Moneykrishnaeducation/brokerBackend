@@ -36,6 +36,8 @@ class BrokerBackendConfig(AppConfig):
         threading.Timer(2.0, self.start_mt5_balance_refresher).start()
         threading.Timer(3.0, self.start_monthly_reports_thread).start()
         threading.Timer(4.0, self.start_log_rotation_thread).start()
+        # Ensure periodic Celery tasks are registered in DB (if django-celery-beat is installed)
+        threading.Timer(5.0, self.ensure_periodic_tasks).start()
         
     def start_commission_sync(self):
         """Start the commission synchronization thread.
@@ -59,6 +61,50 @@ class BrokerBackendConfig(AppConfig):
             commission_sync_thread.start()
         except Exception:
             # Silently ignore start failures
+            pass
+
+    def ensure_periodic_tasks(self):
+        """Create the daily trading report PeriodicTask/CrontabSchedule if missing.
+        Runs shortly after startup to avoid interfering with migrations.
+        """
+        try:
+            # Import locally to avoid import-time side effects
+            from django.conf import settings
+            # Delay if running management commands that should skip background init
+            import sys
+            skip_commands = [
+                'makemigrations', 'migrate', 'collectstatic', 'shell', 'test', 'createsuperuser',
+                'loaddata', 'dumpdata', 'check', 'inspectdb', 'dbshell', 'flush', 'showmigrations',
+            ]
+            if any(cmd in sys.argv for cmd in skip_commands):
+                return
+
+            # Create CrontabSchedule and PeriodicTask
+            try:
+                from django_celery_beat.models import CrontabSchedule, PeriodicTask
+            except Exception:
+                return
+
+            tz = getattr(settings, 'TIME_ZONE', 'UTC')
+            # Create or get crontab for 02:00
+            schedule, _ = CrontabSchedule.objects.get_or_create(
+                minute='0', hour='2', day_of_week='*', day_of_month='*', month_of_year='*', timezone=tz
+            )
+
+            task_name = 'daily-trading-report-2am'
+            task_path = 'adminPanel.tasks.daily_reports.daily_trading_report_runner'
+
+            PeriodicTask.objects.get_or_create(
+                name=task_name,
+                defaults={
+                    'crontab': schedule,
+                    'task': task_path,
+                    'enabled': True,
+                    'description': 'Runs daily trading report runner at 02:00 (server time) for previous day',
+                }
+            )
+        except Exception:
+            # Fail silently; this is best-effort convenience
             pass
 
     def start_monthly_reports_thread(self):

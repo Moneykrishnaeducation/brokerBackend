@@ -363,6 +363,25 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+
+
+# Celery beat schedule: run daily trading report runner at 02:00 server time (next-day reports)
+try:
+    from celery.schedules import crontab
+    CELERY_TIMEZONE = TIME_ZONE
+    # Use the Django database scheduler when django-celery-beat is installed
+    CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+    CELERY_BEAT_SCHEDULE = {
+        'daily-trading-report-2am': {
+            'task': 'adminPanel.tasks.daily_reports.daily_trading_report_runner',
+            'schedule': crontab(hour=2, minute=0),
+            'args': (),
+        },
+    }
+except Exception:
+    # If celery is not installed in this environment, ignore schedule setup
+    pass
+
 # CORS and CSRF
 # Use env flag to control wide-open CORS; default to False in production
 CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=False)
@@ -765,22 +784,22 @@ REPORTS_DEFAULT_FROM_EMAIL = env('REPORTS_DEFAULT_FROM_EMAIL', default=DEFAULT_F
 
 
 # Hosts
-# ROOT_HOSTCONF = 'brokerBackend.hosts'
-# DEFAULT_HOST = 'www'
-# import socket
-# if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
-#    PARENT_HOST = 'localhost:8000'
-# else:
-#     PARENT_HOST = 'vtindex.com'
-# HOST_PORT = '8000'
-# HOST_SCHEME = 'http'
-
-# Hosts
 ROOT_HOSTCONF = 'brokerBackend.hosts'
 DEFAULT_HOST = 'www'
-PARENT_HOST = 'vtindex.com'
+import socket
+if DEBUG or 'localhost' in socket.gethostname() or '127.0.0.1' in ALLOWED_HOSTS:
+   PARENT_HOST = 'localhost:8000'
+else:
+    PARENT_HOST = 'vtindex.com'
 HOST_PORT = '8000'
 HOST_SCHEME = 'http'
+
+# Hosts
+# ROOT_HOSTCONF = 'brokerBackend.hosts'
+# DEFAULT_HOST = 'www'
+# PARENT_HOST = 'vtindex.com'
+# HOST_PORT = '9090'
+# HOST_SCHEME = 'http'
 
 
 # Admin Settings
