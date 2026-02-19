@@ -36,6 +36,8 @@ class BrokerBackendConfig(AppConfig):
         threading.Timer(2.0, self.start_mt5_balance_refresher).start()
         threading.Timer(3.0, self.start_monthly_reports_thread).start()
         threading.Timer(4.0, self.start_log_rotation_thread).start()
+        # Start in-process scheduler (APScheduler) to run daily trading report at 02:00
+        threading.Timer(5.0, self.start_apscheduler).start()
         
     def start_commission_sync(self):
         """Start the commission synchronization thread.
@@ -59,6 +61,58 @@ class BrokerBackendConfig(AppConfig):
             commission_sync_thread.start()
         except Exception:
             # Silently ignore start failures
+            pass
+
+    def ensure_periodic_tasks(self):
+        """Create the daily trading report PeriodicTask/CrontabSchedule if missing.
+        Runs shortly after startup to avoid interfering with migrations.
+        """
+        # Deprecated: Celery/django-celery-beat periodic task creation removed.
+        # Scheduling is now handled in-process via APScheduler (start_apscheduler).
+        return
+
+    def start_apscheduler(self):
+        """Start an in-process APScheduler to run scheduled jobs."""
+        try:
+            # Avoid importing APScheduler at module-import time if not installed
+            from apscheduler.schedulers.background import BackgroundScheduler
+            from apscheduler.triggers.cron import CronTrigger
+            from django.conf import settings
+            from adminPanel.tasks.daily_reports import daily_trading_report_runner
+            import pytz
+
+            # Skip scheduling during management commands
+            import sys
+            skip_commands = [
+                'makemigrations', 'migrate', 'collectstatic', 'shell', 'test', 'createsuperuser',
+                'loaddata', 'dumpdata', 'check', 'inspectdb', 'dbshell', 'flush', 'showmigrations',
+            ]
+            if any(cmd in sys.argv for cmd in skip_commands):
+                return
+
+            tzname = getattr(settings, 'TIME_ZONE', 'UTC')
+            try:
+                tz = pytz.timezone(tzname)
+            except Exception:
+                tz = pytz.UTC
+
+            scheduler = BackgroundScheduler(timezone=tz)
+
+            # Daily at 02:00 server time
+            trigger = CronTrigger(hour='2', minute='0', timezone=tz)
+
+            # Add job if not already present
+            job_id = 'daily_trading_report_02_00'
+            existing = [j.id for j in scheduler.get_jobs()]
+            if job_id not in existing:
+                scheduler.add_job(daily_trading_report_runner, trigger, id=job_id, args=[None, False], replace_existing=True)
+
+            scheduler.start()
+
+            # Keep a reference to avoid GC
+            self._apscheduler = scheduler
+        except Exception:
+            # Fail silently; scheduling is convenience not critical
             pass
 
     def start_monthly_reports_thread(self):
@@ -180,48 +234,6 @@ class BrokerBackendConfig(AppConfig):
                                 try:
                                     with transaction.atomic():
                                         TradingAccount.objects.bulk_update(updates, ['balance', 'equity'])
-                                        
-                                        # 🔥 CRITICAL: Update PAMM manager profit/loss from trading
-                                        # This is the ONLY place manager_profit_loss_amount should change
-                                        try:
-                                            from clientPanel.models import PAMAccount
-                                            from decimal import Decimal
-                                            
-                                            # Get all PAMM accounts for updated trading accounts
-                                            updated_logins = [str(acc.account_id) for acc in updates]
-                                            pamm_accounts = PAMAccount.objects.filter(mt5_login__in=updated_logins)
-                                            
-                                            pamm_updates = []
-                                            for pamm in pamm_accounts:
-                                                # Find the corresponding updated TradingAccount
-                                                updated_acc = next((acc for acc in updates if str(acc.account_id) == str(pamm.mt5_login)), None)
-                                                if not updated_acc:
-                                                    continue
-                                                
-                                                # Calculate pure trading P/L (equity - balance)
-                                                # This excludes deposits/withdrawals which affect balance
-                                                trading_pnl = Decimal(str(updated_acc.equity or 0)) - Decimal(str(updated_acc.balance or 0))
-                                                
-                                                # Update manager's profit/loss to reflect current trading result
-                                                # Manager's share is proportional to their ownership
-                                                ownership_pct = Decimal(str(pamm.manager_ownership_percentage)) / Decimal('100')
-                                                manager_trading_pnl = trading_pnl * ownership_pct
-                                                
-                                                # Set the stateful field to the new trading P/L
-                                                # (This replaces the old value, not adds to it, because trading_pnl is already total)
-                                                pamm.manager_profit_loss_amount = manager_trading_pnl.quantize(Decimal('0.01'))
-                                                pamm_updates.append(pamm)
-                                            
-                                            # Bulk update PAMM profit/loss
-                                            if pamm_updates:
-                                                PAMAccount.objects.bulk_update(pamm_updates, ['manager_profit_loss_amount'])
-                                        except Exception as e:
-                                            # Log but don't fail the entire sync
-                                            try:
-                                                logger.warning(f"Failed to update PAMM profit/loss: {e}")
-                                            except:
-                                                pass
-                                        
                                 except Exception as e:
                                     logger.warning(f"Bulk update failed for batch: {e}")
                                     # Fallback to individual saves
